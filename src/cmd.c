@@ -281,8 +281,31 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
 static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
                             command_t *father) {
     /* TODO: Execute cmd1 and cmd2 simultaneously. */
-
-    return true; /* TODO: Replace with actual exit status. */
+    pid_t pid1, pid2;
+    int status1, status2;
+    pid1 = fork();
+    if (pid1 == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    } else if (pid1 == 0) {
+        status1 = parse_command(cmd1, level + 1, father);
+        exit(status1);
+    } else {
+        pid2 = fork();
+        if (pid2 == -1) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        } else if (pid2 == 0) {
+            status2 = parse_command(cmd2, level + 1, father);
+            exit(status2);
+        } else {
+            waitpid(pid1, &status1, 0);
+            waitpid(pid2, &status2, 0);
+            if (WIFEXITED(status1) && WIFEXITED(status2))
+                return true;
+        }
+    }
+    return true;
 }
 
 /**
@@ -290,9 +313,45 @@ static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
  */
 static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
                         command_t *father) {
-    /* TODO: Redirect the output of cmd1 to the input of cmd2. */
-
-    return true; /* TODO: Replace with actual exit status. */
+    // TODO: Redirect the output of cmd1 to the input of cmd2.
+    int fd[2];
+    pid_t pid1, pid2;
+    int status1, status2;
+    if (pipe(fd) == -1) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+    pid1 = fork();
+    if (pid1 == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    } else if (pid1 == 0) {
+        close(fd[READ]);
+        dup2(fd[WRITE], STDOUT_FILENO);
+        close(fd[WRITE]);
+        status1 = parse_command(cmd1, level + 1, father);
+        exit(status1);
+    } else {
+        pid2 = fork();
+        if (pid2 == -1) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        } else if (pid2 == 0) {
+            close(fd[WRITE]);
+            dup2(fd[READ], STDIN_FILENO);
+            close(fd[READ]);
+            status2 = parse_command(cmd2, level + 1, father);
+            exit(status2);
+        } else {
+            close(fd[READ]);
+            close(fd[WRITE]);
+            waitpid(pid1, &status1, 0);
+            waitpid(pid2, &status2, 0);
+            if (WIFEXITED(status1) && WIFEXITED(status2))
+                return true;
+        }
+    }
+    return true;
 }
 
 /**
@@ -320,6 +379,8 @@ int parse_command(command_t *c, int level, command_t *father) {
 
     case OP_PARALLEL:
         /* TODO: Execute the commands simultaneously. */
+        if (c->cmd1 && c->cmd2)
+            status = run_in_parallel(c->cmd1, c->cmd2, level + 1, c);
         break;
 
     case OP_CONDITIONAL_NZERO:
@@ -354,6 +415,8 @@ int parse_command(command_t *c, int level, command_t *father) {
         /* TODO: Redirect the output of the first command to the
          * input of the second.
          */
+        if (c->cmd1 && c->cmd2)
+            status = run_on_pipe(c->cmd1, c->cmd2, level + 1, c);
         break;
 
     default:
