@@ -36,13 +36,21 @@ static char *get_value_env(word_t *aux) {
         if (aux->expand == true) {
             if (getenv(aux->string) == NULL)
                 setenv(aux->string, "", 1);
-            realloc(value, sizeof(char) * (strlen(value) +
-                                           strlen(getenv(aux->string)) + 1));
-
+            value = realloc(
+                value, sizeof(char) *
+                           (strlen(value) + strlen(getenv(aux->string)) + 1));
+            if (!value) {
+                perror("realloc");
+                exit(EXIT_FAILURE);
+            }
             strcat(value, getenv(aux->string));
         } else {
-            realloc(value,
-                    sizeof(char) * (strlen(value) + strlen(aux->string) + 1));
+            value = realloc(value, sizeof(char) * (strlen(value) +
+                                                   strlen(aux->string) + 1));
+            if (!value) {
+                perror("realloc");
+                exit(EXIT_FAILURE);
+            }
             strcat(value, aux->string);
         }
         aux = aux->next_part;
@@ -161,7 +169,6 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
     /* TODO: Sanity checks. */
     if (!s || !s->verb)
         return 0;
-    int status;
     int fd;
     if (strcmp(s->verb->string, "false") == 0)
         return 1;
@@ -207,6 +214,10 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
         simple_command_t *aux = s;
         while (aux->params) {
             args = realloc(args, sizeof(char *) * (index + 1));
+            if (!args) {
+                perror("realloc");
+                exit(EXIT_FAILURE);
+            }
             args[index] =
                 malloc(sizeof(char) * (strlen(aux->params->string) + 1));
             if (aux->params->expand == true) {
@@ -220,6 +231,10 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
             aux->params = aux->params->next_word;
         }
         args = realloc(args, sizeof(char *) * (index + 1));
+        if (!args) {
+            perror("realloc");
+            exit(EXIT_FAILURE);
+        }
         args[index] = NULL;
         if (s->out && s->err) {
             fd = open(s->err->string, O_CREAT | O_WRONLY | O_TRUNC,
@@ -302,7 +317,7 @@ static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
             waitpid(pid1, &status1, 0);
             waitpid(pid2, &status2, 0);
             if (WIFEXITED(status1) && WIFEXITED(status2))
-                return true;
+                return 0;
         }
     }
     return true;
@@ -313,7 +328,7 @@ static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
  */
 static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
                         command_t *father) {
-    // TODO: Redirect the output of cmd1 to the input of cmd2.
+    /* TODO: Redirect the output of cmd1 to the input of cmd2. */
     int fd[2];
     pid_t pid1, pid2;
     int status1, status2;
@@ -347,8 +362,8 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
             close(fd[WRITE]);
             waitpid(pid1, &status1, 0);
             waitpid(pid2, &status2, 0);
-            if (WIFEXITED(status1) && WIFEXITED(status2))
-                return true;
+            if (WIFEXITED(status1) && WIFEXITED(status2) && status2 == 0)
+                return 0;
         }
     }
     return true;
