@@ -130,18 +130,6 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
     /* TODO: Sanity checks. */
     if (!s || !s->verb)
         return 0;
-    // if (s->verb->string)
-    //     printf("verb: %s\n", s->verb->string);
-    // word_t *aux = s->verb;
-    // while (aux->next_part) {
-    //     printf("part: %s\n", aux->next_part->string);
-    //     aux = aux->next_part;
-    // }
-    // aux = s->verb;
-    // while (aux->next_word) {
-    //     printf("word: %s\n", aux->next_word->string);
-    //     aux = aux->next_word;
-    // }
     int status;
     int fd;
     if (strcmp(s->verb->string, "false") == 0)
@@ -186,6 +174,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
             value = malloc(sizeof(char) *
                            (strlen(s->verb->next_part->next_part->string) + 1));
             strcpy(value, s->verb->next_part->next_part->string);
+            word_t *aux = s->verb->next_part->next_part;
         }
         setenv(var, value, 1);
         return 0;
@@ -263,11 +252,13 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
         }
         if (execvp(s->verb->string, args) == -1) {
             fprintf(stderr, "Execution failed for '%s'\n", s->verb->string);
-            return 1;
+            exit(1);
         }
     } else {
         int status;
         waitpid(pid, &status, 0);
+        if (WIFEXITED(status))
+            return WEXITSTATUS(status);
     }
     return 0;
 }
@@ -297,7 +288,7 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
  */
 int parse_command(command_t *c, int level, command_t *father) {
     /* TODO: sanity checks */
-    int status, old_status;
+    int status;
     if (!c)
         return 1;
     if (c->op == OP_NONE) {
@@ -324,10 +315,12 @@ int parse_command(command_t *c, int level, command_t *father) {
          * returns non zero.
          */
         if (c->cmd1) {
-            old_status = parse_command(c->cmd1, level + 1, c);
-            if (old_status != 0) {
-                status = parse_command(c->cmd2, level + 1, c);
-            }
+            status = parse_command(c->cmd1, level + 1, c);
+            if (status != 0) {
+                if (c->cmd2)
+                    status = parse_command(c->cmd2, level + 1, c);
+            } else
+                return status;
         }
         break;
 
@@ -337,8 +330,11 @@ int parse_command(command_t *c, int level, command_t *father) {
          */
         if (c->cmd1) {
             status = parse_command(c->cmd1, level + 1, c);
-            if (status == 0)
-                status = parse_command(c->cmd2, level + 1, c);
+            if (status == 0) {
+                if (c->cmd2)
+                    status = parse_command(c->cmd2, level + 1, c);
+            } else
+                return status;
         }
         break;
 
