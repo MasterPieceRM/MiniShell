@@ -20,6 +20,36 @@
 /**
  * Internal change-directory command.
  */
+static char *get_value_env(word_t *aux) {
+    char *value = NULL;
+    if (aux->expand == true) {
+        if (getenv(aux->string) == NULL)
+            setenv(aux->string, "", 1);
+        value = malloc(sizeof(char) * (strlen(getenv(aux->string)) + 1));
+        strcpy(value, getenv(aux->string));
+    } else {
+        value = malloc(sizeof(char) * (strlen(aux->string) + 1));
+        strcpy(value, aux->string);
+    }
+    aux = aux->next_part;
+    while (aux) {
+        if (aux->expand == true) {
+            if (getenv(aux->string) == NULL)
+                setenv(aux->string, "", 1);
+            realloc(value, sizeof(char) * (strlen(value) +
+                                           strlen(getenv(aux->string)) + 1));
+
+            strcat(value, getenv(aux->string));
+        } else {
+            realloc(value,
+                    sizeof(char) * (strlen(value) + strlen(aux->string) + 1));
+            strcat(value, aux->string);
+        }
+        aux = aux->next_part;
+    }
+    return value;
+}
+
 static bool shell_cd(word_t *dir, simple_command_t *s) {
     /* TODO: Execute cd. */
     int fd;
@@ -65,7 +95,7 @@ static bool shell_cd(word_t *dir, simple_command_t *s) {
     }
     if (dir->expand == true) {
         if (chdir(getenv(dir->string)) == -1) {
-            fprintf(stderr, "no such file or directory\n", getenv(dir->string));
+            fprintf(stderr, "no such file or directory\n");
             dup2(saved_stdout, STDOUT_FILENO);
             close(saved_stdout);
             return -1;
@@ -73,7 +103,7 @@ static bool shell_cd(word_t *dir, simple_command_t *s) {
         return 0;
     }
     if (chdir(dir->string) == -1) {
-        fprintf(stderr, "no such file or directory\n", dir->string);
+        fprintf(stderr, "no such file or directory\n");
         dup2(saved_stdout, STDOUT_FILENO);
         close(saved_stdout);
         return -1;
@@ -93,14 +123,15 @@ static int shell_exit(void) {
 
 static int shell_pwd(simple_command_t *s) {
     int saved_stdout = dup(STDOUT_FILENO);
-
     if (s->out) {
         int fd;
+        word_t *aux = s->out;
+        char *arg = get_value_env(aux);
         if (s->io_flags == IO_OUT_APPEND) {
-            fd = open(s->out->string, O_CREAT | O_WRONLY | O_APPEND,
+            fd = open(arg, O_CREAT | O_WRONLY | O_APPEND,
                       S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         } else {
-            fd = open(s->out->string, O_CREAT | O_WRONLY | O_TRUNC,
+            fd = open(arg, O_CREAT | O_WRONLY | O_TRUNC,
                       S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         }
         if (fd == -1) {
@@ -111,9 +142,10 @@ static int shell_pwd(simple_command_t *s) {
         close(fd);
     }
     char cwd[1024];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
         printf("%s\n", cwd);
-    else
+        fflush(STDIN_FILENO);
+    } else
         perror("getcwd() error");
 
     dup2(saved_stdout, STDOUT_FILENO);
@@ -121,7 +153,6 @@ static int shell_pwd(simple_command_t *s) {
 
     return 0;
 }
-
 /**
  * Parse a simple command (internal, environment variable assignment,
  * external command).
@@ -141,41 +172,22 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
     if (strcmp(s->verb->string, "exit") == 0 ||
         strcmp(s->verb->string, "quit") == 0)
         return shell_exit();
-    if (strcmp(s->verb->string, "pwd") == 0)
+    if (strcmp(s->verb->string, "pwd") == 0) {
         return shell_pwd(s);
+    }
+
     if (s->verb->expand == true && s->verb->next_part == NULL) {
         if (getenv(s->verb->string) == NULL)
             setenv(s->verb->string, "", 1);
         printf("%s\n", getenv(s->verb->string));
         return 0;
     }
-    if (s->verb->next_part != NULL && s->verb->next_part->string[0] == '=' &&
-        s->verb->next_part->next_part != NULL) {
+    if (s->verb->next_part != NULL && s->verb->next_part->string[0] == '=') {
         char *value = NULL;
         char *var = malloc(sizeof(char) * (strlen(s->verb->string) + 1));
         strcpy(var, s->verb->string);
-        if (s->verb->next_part->next_part->expand == true) {
-            value = malloc(
-                sizeof(char) *
-                (strlen(getenv(s->verb->next_part->next_part->string)) + 1));
-            if (getenv(s->verb->next_part->next_part->string) == NULL)
-                setenv(s->verb->next_part->next_part->string, "", 1);
-            strcpy(value, getenv(s->verb->next_part->next_part->string));
-            word_t *aux = s->verb->next_part->next_part;
-            aux->expand = false;
-            while (aux->next_part != NULL) {
-                realloc(value,
-                        sizeof(char) * (strlen(value) +
-                                        strlen(aux->next_part->string) + 1));
-                strcat(value, aux->next_part->string);
-                aux = aux->next_part;
-            }
-        } else {
-            value = malloc(sizeof(char) *
-                           (strlen(s->verb->next_part->next_part->string) + 1));
-            strcpy(value, s->verb->next_part->next_part->string);
-            word_t *aux = s->verb->next_part->next_part;
-        }
+        word_t *aux = s->verb->next_part->next_part;
+        value = get_value_env(aux);
         setenv(var, value, 1);
         return 0;
     }
