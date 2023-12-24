@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <regex.h>
 #include <stdio.h>
@@ -21,14 +22,22 @@
  * Internal change-directory command.
  */
 static char *get_value_env(word_t *aux) {
-    char *value = NULL;
+    char *value = NULL, *value_aux = NULL;
     if (aux->expand == true) {
         if (getenv(aux->string) == NULL)
             setenv(aux->string, "", 1);
         value = malloc(sizeof(char) * (strlen(getenv(aux->string)) + 1));
+        if (!value) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
         strcpy(value, getenv(aux->string));
     } else {
         value = malloc(sizeof(char) * (strlen(aux->string) + 1));
+        if (!value) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
         strcpy(value, aux->string);
     }
     aux = aux->next_part;
@@ -36,20 +45,27 @@ static char *get_value_env(word_t *aux) {
         if (aux->expand == true) {
             if (getenv(aux->string) == NULL)
                 setenv(aux->string, "", 1);
-            value = realloc(
+            char *value_aux = realloc(
                 value, sizeof(char) *
                            (strlen(value) + strlen(getenv(aux->string)) + 1));
-            if (!value) {
+            if (!value_aux) {
+                free(value);
                 perror("realloc");
                 exit(EXIT_FAILURE);
+            } else {
+                value = value_aux;
             }
             strcat(value, getenv(aux->string));
         } else {
-            value = realloc(value, sizeof(char) * (strlen(value) +
-                                                   strlen(aux->string) + 1));
-            if (!value) {
+            value_aux =
+                realloc(value, sizeof(char) *
+                                   (strlen(value) + strlen(aux->string) + 1));
+            if (!value_aux) {
+                free(value);
                 perror("realloc");
                 exit(EXIT_FAILURE);
+            } else {
+                value = value_aux;
             }
             strcat(value, aux->string);
         }
@@ -148,6 +164,7 @@ static int shell_pwd(simple_command_t *s) {
         }
         dup2(fd, STDOUT_FILENO);
         close(fd);
+        free(arg);
     }
     char cwd[1024];
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
@@ -182,7 +199,16 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
     if (strcmp(s->verb->string, "pwd") == 0) {
         return shell_pwd(s);
     }
-
+    // word_t *auxiliar = s->params;
+    // while (auxiliar->next_part) {
+    //     printf("next->part: %s\n", auxiliar->string);
+    //     auxiliar = auxiliar->next_part;
+    // }
+    // auxiliar = s->params;
+    // while (auxiliar) {
+    //     printf("next->word: %s\n", auxiliar->string);
+    //     auxiliar = auxiliar->next_word;
+    // }
     if (s->verb->expand == true && s->verb->next_part == NULL) {
         if (getenv(s->verb->string) == NULL)
             setenv(s->verb->string, "", 1);
@@ -206,7 +232,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         char **args = NULL;
-        int index = 0;
+        int index = 0, offset = 0;
         args = malloc(sizeof(char *));
         args[index] = malloc(sizeof(char) * (strlen(s->verb->string) + 1));
         strcpy(args[index], s->verb->string);
@@ -218,14 +244,23 @@ static int parse_simple(simple_command_t *s, int level, command_t *father) {
                 perror("realloc");
                 exit(EXIT_FAILURE);
             }
-            args[index] =
-                malloc(sizeof(char) * (strlen(aux->params->string) + 1));
+            while (isspace((unsigned char)aux->params->string[offset]) &&
+                   !strcmp(s->verb->string, "echo"))
+                offset++;
+            // printf("%s\n", aux->params->string + offset);
+            args[index] = malloc(sizeof(char) *
+                                 (strlen(aux->params->string) - offset + 1));
             if (aux->params->expand == true) {
                 if (getenv(aux->params->string) == NULL)
                     setenv(aux->params->string, "", 1);
                 strcpy(args[index], getenv(aux->params->string));
+                if (!aux->params->next_word) {
+                    index++;
+                    aux->params = aux->params->next_part;
+                    continue;
+                }
             } else {
-                strcpy(args[index], aux->params->string);
+                strcpy(args[index], aux->params->string + offset);
             }
             index++;
             aux->params = aux->params->next_word;
